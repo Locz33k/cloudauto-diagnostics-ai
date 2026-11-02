@@ -1,0 +1,450 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>CloudAuto Diagnostics AI - System Warsztatowy</title>
+  <!-- Tailwind CSS -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- React & ReactDOM -->
+  <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+  <!-- Babel (kompilacja JSX) -->
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+</head>
+<body class="bg-slate-900 text-slate-100 min-h-screen font-sans">
+  <div id="root"></div>
+
+  <script type="text/babel">
+    const { useState, useEffect } = React;
+    const API_URL = "http://127.0.0.1:8000/api";
+
+    function App() {
+      const [view, setView] = useState("mechanic"); // 'mechanic' lub 'client'
+      const [vehicles, setVehicles] = useState([]);
+      const [selectedVehicle, setSelectedVehicle] = useState(null);
+      const [diagnostics, setDiagnostics] = useState([]);
+      
+      // Formularz nowego pojazdu
+      const [brand, setBrand] = useState("Mercedes-Benz");
+      const [model, setModel] = useState("");
+      const [year, setYear] = useState(2020);
+      const [vin, setVin] = useState("");
+      const [ownerName, setOwnerName] = useState("");
+
+      // Formularz skanowania OBD2
+      const [dtcInput, setDtcInput] = useState("P0300, P0171");
+      
+      // Widok Klienta
+      const [clientVinSearch, setClientVinSearch] = useState("");
+      const [clientReport, setClientReport] = useState(null);
+      const [errorMsg, setErrorMsg] = useState("");
+
+      const fetchVehicles = async () => {
+        try {
+          const res = await fetch(`${API_URL}/vehicles`);
+          const data = await res.json();
+          setVehicles(data);
+        } catch (err) {
+          console.error("Błąd połączenia z API:", err);
+        }
+      };
+
+      useEffect(() => {
+        fetchVehicles();
+      }, []);
+
+      const selectVehicle = async (v) => {
+        setSelectedVehicle(v);
+        const res = await fetch(`${API_URL}/diagnostics/${v.id}`);
+        const data = await res.json();
+        setDiagnostics(data);
+      };
+
+      const handleAddVehicle = async (e) => {
+        e.preventDefault();
+        setErrorMsg("");
+        const res = await fetch(`${API_URL}/vehicles`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ brand, model, year: Number(year), vin, owner_name: ownerName })
+        });
+        const data = await res.json();
+        if (!res.ok) {
+          setErrorMsg(data.detail || "Błąd dodawania pojazdu");
+        } else {
+          setModel(""); setVin(""); setOwnerName("");
+          fetchVehicles();
+        }
+      };
+
+      const handleRunScan = async (e) => {
+        e.preventDefault();
+        if (!selectedVehicle) return;
+        const codes = dtcInput.split(",").map(c => c.trim()).filter(c => c);
+        const res = await fetch(`${API_URL}/diagnostics/scan`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ vehicle_id: selectedVehicle.id, dtc_codes: codes })
+        });
+        if (res.ok) {
+          selectVehicle(selectedVehicle);
+        }
+      };
+
+      const handleStatusChange = async (diagId, newStatus) => {
+        await fetch(`${API_URL}/diagnostics/${diagId}/status`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ status: newStatus })
+        });
+        selectVehicle(selectedVehicle);
+      };
+
+      const handleClientSearch = async (e) => {
+        e.preventDefault();
+        setErrorMsg("");
+        setClientReport(null);
+        const res = await fetch(`${API_URL}/client/report/${clientVinSearch.trim()}`);
+        const data = await res.json();
+        if (!res.ok) {
+          setErrorMsg(data.detail || "Nie znaleziono pojazdu");
+        } else {
+          setClientReport(data);
+        }
+      };
+
+      return (
+        <div className="max-w-7xl mx-auto p-6">
+          {/* NAGŁÓWEK */}
+          <header className="flex flex-wrap justify-between items-center bg-slate-800 p-5 rounded-xl border border-slate-700 mb-8 shadow-lg">
+            <div>
+              <h1 className="text-2xl font-bold text-sky-400 tracking-wide">
+                CloudAuto Diagnostics AI
+              </h1>
+              <p className="text-sm text-slate-400">
+                Chmurowy System Diagnostyczno-Doradczy (Mercedes-Benz • BMW • Audi)
+              </p>
+            </div>
+            <div className="flex gap-3 mt-4 sm:mt-0">
+              <button
+                onClick={() => { setView("mechanic"); setErrorMsg(""); }}
+                className={`px-4 py-2 rounded-lg font-semibold transition ${
+                  view === "mechanic" ? "bg-sky-500 text-white shadow-md" : "bg-slate-700 text-slate-300 hover:bg-slate-600"
+                }`}
+              >
+                🔧 Panel Mechanika (Pełny dostęp)
+              </button>
+              <button
+                onClick={() => { setView("client"); setErrorMsg(""); }}
+                className={`px-4 py-2 rounded-lg font-semibold transition ${
+                  view === "client" ? "bg-emerald-500 text-white shadow-md" : "bg-slate-700 text-slate-300 hover:bg-slate-600"
+                }`}
+              >
+                👁️ Portal Klienta (Tylko do wglądu)
+              </button>
+            </div>
+          </header>
+
+          {errorMsg && (
+            <div className="bg-red-900/60 border border-red-500 text-red-200 p-4 rounded-lg mb-6">
+              ⚠️ {errorMsg}
+            </div>
+          )}
+
+          {/* WIDOK MECHANIKA */}
+          {view === "mechanic" && (
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+              {/* LEWA KOLUMNA: Dodawanie i lista aut */}
+              <div className="space-y-6">
+                <div className="bg-slate-800 p-5 rounded-xl border border-slate-700">
+                  <h2 className="text-lg font-bold mb-4 text-sky-300">1. Rejestracja Pojazdu</h2>
+                  <form onSubmit={handleAddVehicle} className="space-y-3">
+                    <div>
+                      <label className="text-xs text-slate-400">Marka pojazdu (Ograniczenie systemu)</label>
+                      <select
+                        value={brand}
+                        onChange={e => setBrand(e.target.value)}
+                        className="w-full bg-slate-900 border border-slate-700 rounded p-2 text-white mt-1"
+                      >
+                        <option value="Mercedes-Benz">Mercedes-Benz</option>
+                        <option value="BMW">BMW</option>
+                        <option value="Audi">Audi</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label className="text-xs text-slate-400">Model i oznaczenie</label>
+                      <input
+                        type="text"
+                        placeholder="np. W205 C200 / F30 328i / A4 B9"
+                        required
+                        value={model}
+                        onChange={e => setModel(e.target.value)}
+                        className="w-full bg-slate-900 border border-slate-700 rounded p-2 text-white mt-1"
+                      />
+                    </div>
+                    <div className="grid grid-cols-2 gap-2">
+                      <div>
+                        <label className="text-xs text-slate-400">Rocznik</label>
+                        <input
+                          type="number"
+                          required
+                          value={year}
+                          onChange={e => setYear(e.target.value)}
+                          className="w-full bg-slate-900 border border-slate-700 rounded p-2 text-white mt-1"
+                        />
+                      </div>
+                      <div>
+                        <label className="text-xs text-slate-400">Właściciel (Klient)</label>
+                        <input
+                          type="text"
+                          placeholder="Jan Kowalski"
+                          required
+                          value={ownerName}
+                          onChange={e => setOwnerName(e.target.value)}
+                          className="w-full bg-slate-900 border border-slate-700 rounded p-2 text-white mt-1"
+                        />
+                      </div>
+                    </div>
+                    <div>
+                      <label className="text-xs text-slate-400">Numer VIN (Unikalny klucz dla Klienta)</label>
+                      <input
+                        type="text"
+                        placeholder="np. WDD2050421A000001"
+                        required
+                        value={vin}
+                        onChange={e => setVin(e.target.value)}
+                        className="w-full bg-slate-900 border border-slate-700 rounded p-2 text-white mt-1 uppercase"
+                      />
+                    </div>
+                    <button
+                      type="submit"
+                      className="w-full bg-sky-600 hover:bg-sky-500 text-white font-semibold py-2 rounded-lg transition mt-2"
+                    >
+                      + Dodaj pojazd do warsztatu
+                    </button>
+                  </form>
+                </div>
+
+                <div className="bg-slate-800 p-5 rounded-xl border border-slate-700">
+                  <h2 className="text-lg font-bold mb-3 text-sky-300">2. Pojazdy w serwisie ({vehicles.length})</h2>
+                  <div className="space-y-2 max-h-80 overflow-y-auto">
+                    {vehicles.length === 0 && (
+                      <p className="text-sm text-slate-400">Brak zarejestrowanych pojazdów. Dodaj pierwsze auto powyżej.</p>
+                    )}
+                    {vehicles.map(v => (
+                      <div
+                        key={v.id}
+                        onClick={() => selectVehicle(v)}
+                        className={`p-3 rounded-lg border cursor-pointer transition ${
+                          selectedVehicle?.id === v.id
+                            ? "bg-sky-900/40 border-sky-400"
+                            : "bg-slate-900 border-slate-700 hover:border-slate-500"
+                        }`}
+                      >
+                        <div className="font-bold text-white">{v.brand} {v.model} ({v.year})</div>
+                        <div className="text-xs text-sky-400 font-mono mt-1">VIN: {v.vin}</div>
+                        <div className="text-xs text-slate-400">Klient: {v.owner_name}</div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+
+              {/* PRAWA KOLUMNA: Skaner OBD2 i Biuletyny TIPS */}
+              <div className="lg:col-span-2 space-y-6">
+                {!selectedVehicle ? (
+                  <div className="bg-slate-800 p-10 rounded-xl border border-slate-700 text-center text-slate-400">
+                    👈 Wybierz pojazd z listy po lewej stronie (lub dodaj nowy), aby uruchomić procedurę diagnostyczną OBD2 / TIPS.
+                  </div>
+                ) : (
+                  <>
+                    <div className="bg-slate-800 p-6 rounded-xl border border-slate-700">
+                      <div className="flex justify-between items-start mb-4">
+                        <div>
+                          <span className="text-xs uppercase bg-sky-500/20 text-sky-300 px-2 py-1 rounded">
+                            Aktywna sesja diagnostyczna
+                          </span>
+                          <h2 className="text-xl font-bold mt-2">
+                            {selectedVehicle.brand} {selectedVehicle.model} ({selectedVehicle.year})
+                          </h2>
+                          <p className="text-sm text-slate-400 font-mono">VIN: {selectedVehicle.vin}</p>
+                        </div>
+                      </div>
+
+                      <form onSubmit={handleRunScan} className="bg-slate-900 p-4 rounded-lg border border-slate-700">
+                        <label className="block text-sm font-semibold text-sky-300 mb-2">
+                          Wprowadź odczytane kody błędów DTC ze sterowników (oddzielone przecinkiem):
+                        </label>
+                        <div className="flex flex-wrap gap-2 mb-3">
+                          <span className="text-xs text-slate-400 self-center">Szybkie presety testowe:</span>
+                          <button type="button" onClick={() => setDtcInput("P0300, P0171")} className="text-xs bg-slate-800 hover:bg-slate-700 border border-slate-600 px-2 py-1 rounded">
+                            P0300 + P0171 (Korelacja: Odma / Lewe powietrze)
+                          </button>
+                          <button type="button" onClick={() => setDtcInput("P0299")} className="text-xs bg-slate-800 hover:bg-slate-700 border border-slate-600 px-2 py-1 rounded">
+                            P0299 (Niskie ciśnienie doładowania Turbo)
+                          </button>
+                          <button type="button" onClick={() => setDtcInput("U0100")} className="text-xs bg-slate-800 hover:bg-slate-700 border border-slate-600 px-2 py-1 rounded">
+                            U0100 (Magistrala CAN / Brak komunikacji ECU)
+                          </button>
+                        </div>
+                        <div className="flex gap-3">
+                          <input
+                            type="text"
+                            value={dtcInput}
+                            onChange={e => setDtcInput(e.target.value)}
+                            placeholder="np. P0300, P0171"
+                            required
+                            className="flex-1 bg-slate-950 border border-slate-700 rounded-lg px-4 py-2 text-white font-mono uppercase"
+                          />
+                          <button
+                            type="submit"
+                            className="bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold px-6 py-2 rounded-lg transition"
+                          >
+                            ⚡ Uruchom Analizę AI / TIPS
+                          </button>
+                        </div>
+                      </form>
+                    </div>
+
+                    {/* HISTORIA I WYNIKI DIAGNOZ */}
+                    <div className="space-y-4">
+                      <h3 className="text-lg font-bold text-sky-300">
+                        Raporty Diagnostyczne i Procedury Naprawcze ({diagnostics.length})
+                      </h3>
+                      {diagnostics.map(d => (
+                        <div key={d.id} className="bg-slate-800 p-5 rounded-xl border border-slate-700 space-y-4">
+                          <div className="flex flex-wrap justify-between items-center border-b border-slate-700 pb-3">
+                            <div>
+                              <span className="font-mono font-bold text-amber-400 text-lg">
+                                Kody DTC: {d.dtc_codes}
+                              </span>
+                              <span className="text-xs text-slate-400 ml-3">{d.created_at}</span>
+                            </div>
+                            <div className="flex items-center gap-2">
+                              <span className="text-xs text-slate-400">Status naprawy:</span>
+                              <select
+                                value={d.status}
+                                onChange={e => handleStatusChange(d.id, e.target.value)}
+                                className="bg-slate-900 border border-slate-600 rounded px-3 py-1 text-sm font-semibold text-emerald-400"
+                              >
+                                <option value="W toku">⏳ W toku</option>
+                                <option value="Oczekiwanie na części">📦 Oczekiwanie na części</option>
+                                <option value="Zakończone">✅ Zakończone (Auto gotowe)</option>
+                              </select>
+                            </div>
+                          </div>
+
+                          <div className="bg-sky-950/40 border border-sky-800/70 p-4 rounded-lg">
+                            <h4 className="text-xs font-bold uppercase text-sky-400 mb-1">
+                              🧠 Inteligentna Diagnoza Skojarzona (Moduł Doradczy):
+                            </h4>
+                            <p className="text-sm text-slate-200 leading-relaxed">{d.ai_diagnosis}</p>
+                          </div>
+
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            <div className="bg-slate-900 p-4 rounded-lg border border-slate-700">
+                              <h4 className="text-xs font-bold uppercase text-amber-400 mb-2">
+                                📋 Zalecana procedura krok po kroku (TIPS):
+                              </h4>
+                              <pre className="text-xs text-slate-300 whitespace-pre-wrap font-sans leading-relaxed">
+                                {d.repair_steps}
+                              </pre>
+                            </div>
+                            <div className="bg-slate-900 p-4 rounded-lg border border-slate-700">
+                              <h4 className="text-xs font-bold uppercase text-emerald-400 mb-2">
+                                ⚙️ Podzespoły i części do weryfikacji / wymiany:
+                              </h4>
+                              <p className="text-xs text-slate-300 leading-relaxed">{d.parts_to_check}</p>
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* WIDOK KLIENTA (READ-ONLY) */}
+          {view === "client" && (
+            <div className="max-w-3xl mx-auto space-y-6">
+              <div className="bg-slate-800 p-6 rounded-xl border border-emerald-700/60">
+                <div className="flex justify-between items-center mb-2">
+                  <h2 className="text-xl font-bold text-emerald-400">
+                    Portal Klienta – Wgląd w Historię Diagnostyki i Status Naprawy
+                  </h2>
+                  <span className="text-xs bg-emerald-500/20 text-emerald-300 px-3 py-1 rounded-full font-semibold">
+                    Tryb: TYLKO DO ODCZYTU (Read-Only)
+                  </span>
+                </div>
+                <p className="text-sm text-slate-400 mb-4">
+                  Wprowadź numer VIN swojego pojazdu, aby sprawdzić, jakie błędy zdiagnozował mechanik, jakie czynności naprawcze wykonano oraz na jakim etapie znajduje się naprawa.
+                </p>
+
+                <form onSubmit={handleClientSearch} className="flex gap-3">
+                  <input
+                    type="text"
+                    placeholder="Wpisz numer VIN pojazdu (np. WDD2050421A000001)"
+                    value={clientVinSearch}
+                    onChange={e => setClientVinSearch(e.target.value)}
+                    required
+                    className="flex-1 bg-slate-900 border border-slate-700 rounded-lg px-4 py-2 text-white font-mono uppercase"
+                  />
+                  <button
+                    type="submit"
+                    className="bg-emerald-600 hover:bg-emerald-500 text-white font-bold px-6 py-2 rounded-lg transition"
+                  >
+                    🔍 Sprawdź status auta
+                  </button>
+                </form>
+              </div>
+
+              {clientReport && (
+                <div className="bg-slate-800 p-6 rounded-xl border border-slate-700 space-y-6">
+                  <div className="border-b border-slate-700 pb-4 flex justify-between items-center">
+                    <div>
+                      <h3 className="text-xl font-bold text-white">
+                        {clientReport.vehicle_info.brand} {clientReport.vehicle_info.model} ({clientReport.vehicle_info.year})
+                      </h3>
+                      <p className="text-sm text-slate-400">
+                        Właściciel: <strong className="text-slate-200">{clientReport.vehicle_info.owner_name}</strong> | VIN: <span className="font-mono text-emerald-400">{clientReport.vehicle_info.vin}</span>
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="space-y-4">
+                    <h4 className="font-bold text-slate-300">Wykaz przeprowadzonych czynności diagnostycznych:</h4>
+                    {clientReport.repair_history.length === 0 ? (
+                      <p className="text-sm text-slate-400">Mechanik nie wprowadził jeszcze raportu diagnostycznego dla tego pojazdu.</p>
+                    ) : (
+                      clientReport.repair_history.map((item, idx) => (
+                        <div key={idx} className="bg-slate-900 p-4 rounded-lg border border-slate-700 space-y-3">
+                          <div className="flex justify-between items-center">
+                            <span className="font-mono text-amber-400 font-bold">Wykryte kody: {item.dtc_codes}</span>
+                            <span className="px-3 py-1 rounded-full text-xs font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/40">
+                              Status: {item.status}
+                            </span>
+                          </div>
+                          <p className="text-sm text-slate-200"><strong>Diagnoza warsztatu:</strong> {item.ai_diagnosis}</p>
+                          <p className="text-xs text-slate-400"><strong>Zastosowane kroki kontrolne:</strong> {item.repair_steps}</p>
+                          <p className="text-xs text-slate-400"><strong>Weryfikowane części:</strong> {item.parts_to_check}</p>
+                          <div className="text-right text-xs text-slate-500">Data wpisu: {item.created_at}</div>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      );
+    }
+
+    const root = ReactDOM.createRoot(document.getElementById("root"));
+    root.render(<App />);
+  </script>
+</body>
+</html>
